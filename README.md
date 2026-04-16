@@ -222,6 +222,8 @@ For AWS deployment:
 
 > AWS free-trial note: avoid always-on GPU endpoints. Use `GEN_MODEL_BACKEND=google_ai` for generation.
 
+For the current EC2 deployment path in this repo, we intentionally default to a small burstable instance and a lightweight runtime profile. That keeps the app practical on low-cost or free-trial-style infrastructure, but it also means the production deployment may run without the heavier embedding features enabled.
+
 ## GitHub Actions
 
 This repo now supports a simple GitHub Actions CI/CD setup:
@@ -231,6 +233,18 @@ This repo now supports a simple GitHub Actions CI/CD setup:
 - `Deploy to EC2` can also be started manually from the Actions tab
 
 The deploy workflow uses the existing EC2 deployment model in `infra/aws/deploy.sh`, so local deploys and GitHub deploys follow the same path.
+
+To sync repository secrets from your local deployment files:
+
+```bash
+./infra/aws/sync_github_secrets.sh
+```
+
+That script reads:
+
+- `.env`
+- `.env.aws`
+- `stockmind-key.pem`
 
 Required GitHub repository secrets:
 

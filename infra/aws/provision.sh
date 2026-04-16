@@ -8,8 +8,8 @@
 #   aws configure       (run first, enter Access Key / Secret / region)
 #   chmod +x provision.sh && ./provision.sh
 #
-# Free-tier resources created:
-#   EC2 t2.micro        (750 h/month free)
+# Free-tier-friendly resources created:
+#   EC2 t3.micro        (conservative default for small AWS trial deployments)
 #   S3 bucket           (5 GB / 20k GET / 2k PUT free)
 #   SQS queue           (1M requests/month free)
 #   Security group      (port 22, 80, 8000)
@@ -120,7 +120,7 @@ INSTANCE_ID=$(aws ec2 describe-instances \
     --output text 2>/dev/null || echo "None")
 
 if [ "${INSTANCE_ID}" = "None" ] || [ -z "${INSTANCE_ID}" ]; then
-    info "Launching EC2 t2.micro…"
+    info "Launching EC2 ${INSTANCE_TYPE}…"
     INSTANCE_ID=$(aws ec2 run-instances \
         --image-id "${AMI_ID}" \
         --instance-type "${INSTANCE_TYPE}" \
