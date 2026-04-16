@@ -46,7 +46,9 @@ class SigLIP2TextAdapter:
             with torch.no_grad():
                 features = model.get_text_features(**inputs)
 
-            vec = features[0].cpu().float().tolist()
+            vec = features.squeeze().cpu().float().tolist()
+            if isinstance(vec[0], (list, tuple)):
+                vec = vec[0]
             return _normalize(vec)
 
         except Exception as exc:

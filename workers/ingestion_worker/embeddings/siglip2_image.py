@@ -37,13 +37,17 @@ class SigLIP2ImageAdapter:
             img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
             inputs = processor(images=img, return_tensors="pt")
+            pixel_values = inputs["pixel_values"]
             device = next(model.parameters()).device
-            inputs = {k: v.to(device) for k, v in inputs.items()}
+            pixel_values = pixel_values.to(device)
 
             with torch.no_grad():
-                features = model.get_image_features(**inputs)
+                features = model.get_image_features(pixel_values=pixel_values)
 
-            vec = features[0].cpu().float().tolist()
+            # squeeze batch dim then flatten — handles [1152], [1,1152], [1,1,1152]
+            vec = features.squeeze().cpu().float().tolist()
+            if isinstance(vec[0], (list, tuple)):
+                vec = vec[0]
             return _normalize(vec)
 
         except Exception as exc:
