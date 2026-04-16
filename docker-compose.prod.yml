@@ -1,0 +1,70 @@
+version: "3.9"
+# Production docker-compose — runs on EC2 t2.micro.
+# All services in one container host to stay within free tier.
+# Postgres runs locally (no RDS) to avoid costs.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rag_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-multimodal_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: rag_api
+    restart: always
+    env_file: .env
+    environment:
+      - POSTGRES_HOST=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - uploads:/tmp/rag_uploads
+    expose:
+      - "8000"
+
+  worker:
+    build:
+      context: .
+      dockerfile: workers/ingestion_worker/Dockerfile
+    container_name: rag_worker
+    restart: always
+    env_file: .env
+    environment:
+      - POSTGRES_HOST=postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - uploads:/tmp/rag_uploads
+
+  web:
+    image: nginx:alpine
+    container_name: rag_web
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./apps/web/dist:/usr/share/nginx/html:ro
+      - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  uploads:

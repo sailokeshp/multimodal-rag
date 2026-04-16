@@ -1,0 +1,54 @@
+# ── Secrets & environment ─────────────────────────────────────────────────────
+.env
+.env.aws
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# ── Python ────────────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ── Node / Frontend ───────────────────────────────────────────────────────────
+node_modules/
+apps/web/dist/
+apps/web/.vite/
+
+# ── ML model cache ────────────────────────────────────────────────────────────
+# HuggingFace downloads large model weights locally — never commit them
+.cache/
+~/.cache/huggingface/
+workers/ingestion_worker/.model_cache/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+*.override.yml
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── Uploads / generated files ─────────────────────────────────────────────────
+/tmp/
+uploads/
+*.log

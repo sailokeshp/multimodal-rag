@@ -1,0 +1,33 @@
+# ── Core (shared with API) ────────────────────────────────────────────────────
+sqlalchemy[asyncio]==2.0.36
+asyncpg>=0.30.0
+pgvector==0.3.3
+boto3>=1.35.0
+python-dotenv>=1.0.1
+
+# ── Parsing ───────────────────────────────────────────────────────────────────
+pymupdf==1.24.10         # PDF parsing and page rendering (fitz)
+python-docx==1.1.2       # DOCX parsing
+Pillow==10.4.0            # Image handling and thumbnail generation
+pytesseract>=0.3.13       # Local OCR (requires system Tesseract binary)
+
+# ── Text embeddings ───────────────────────────────────────────────────────────
+sentence-transformers>=3.0.0   # BAAI/bge-* models for CPU-friendly text embedding
+
+# ── Image embeddings (SigLIP2) ────────────────────────────────────────────────
+# Uncomment when running with a machine that has enough RAM (~2 GB for SigLIP2):
+# transformers>=4.44.0
+# torch>=2.2.0           # CPU-only torch is ~200 MB; GPU torch is separate
+# accelerate>=0.33.0
+
+# ── Generation ────────────────────────────────────────────────────────────────
+# Groq backend — runs gemma2-9b-it (default, free tier, no credit card):
+groq>=0.9.0
+
+# Google AI backend (alternative free option):
+google-genai>=1.0.0
+
+# Local HuggingFace backend (requires ~4 GB RAM — NOT for EC2 t2.micro):
+# transformers>=4.44.0
+# torch>=2.2.0
+# accelerate>=0.33.0

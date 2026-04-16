@@ -1,0 +1,53 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: multimodal_rag_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-multimodal_rag}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/scripts/init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .                            # repo root — needed for local-upload path resolution
+      dockerfile: apps/api/Dockerfile
+    container_name: multimodal_rag_api
+    env_file: .env
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./apps/api/app:/app/app             # hot-reload source
+      - ${LOCAL_STORAGE_PATH:-/tmp/rag_uploads}:/tmp/rag_uploads
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  worker:
+    build:
+      context: .                            # repo root — worker imports from `app.*`
+      dockerfile: workers/ingestion_worker/Dockerfile
+    container_name: multimodal_rag_worker
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./apps/api/app:/workspace/app
+      - ./workers:/workspace/workers
+      - ${LOCAL_STORAGE_PATH:-/tmp/rag_uploads}:/tmp/rag_uploads
+
+volumes:
+  pgdata:
