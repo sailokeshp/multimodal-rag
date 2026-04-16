@@ -234,3 +234,15 @@ echo ""
 echo "Next step:"
 echo "  ./deploy.sh"
 echo ""
+
+# ── Update GitHub Actions secrets with live values ────────────────────────────
+if command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+    REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)
+    if [ -n "${REPO}" ]; then
+        info "Updating GitHub Actions secrets for ${REPO}…"
+        gh secret set EC2_HOST      --body "${PUBLIC_IP}"  -R "${REPO}"
+        gh secret set S3_BUCKET     --body "${S3_BUCKET}"  -R "${REPO}"
+        gh secret set SQS_QUEUE_URL --body "${SQS_URL}"    -R "${REPO}"
+        info "GitHub secrets updated — future pushes will deploy automatically"
+    fi
+fi
