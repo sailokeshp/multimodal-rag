@@ -1,6 +1,9 @@
 """Unit tests for Pydantic request/response schemas."""
+from io import BytesIO
+
 import pytest
 from pydantic import ValidationError
+from starlette.datastructures import Headers, UploadFile
 
 from app.schemas.upload import UploadRequestIn, FileStatusOut
 from app.schemas.search import SearchRequest, SearchFilters, DocumentChunkResult, ImageResult
@@ -81,3 +84,53 @@ def test_config_max_upload_bytes():
     from app.config import Settings
     s = Settings()
     assert s.max_upload_bytes == s.max_upload_mb * 1024 * 1024
+
+
+def test_config_embedding_flags_defaults():
+    from app.config import Settings
+    s = Settings()
+    assert s.enable_text_embeddings is True
+    assert s.enable_image_embeddings is False
+
+
+@pytest.mark.asyncio
+async def test_direct_upload_uses_storage_backend(monkeypatch):
+    from app.routes.upload import local_upload
+
+    class FakeDB:
+        def __init__(self):
+            self.rows = []
+
+        def add(self, row):
+            self.rows.append(row)
+
+        async def flush(self):
+            return None
+
+    writes = []
+    enqueued = []
+
+    def fake_write_bytes(self, s3_key, data, content_type="application/octet-stream"):
+        writes.append((s3_key, data, content_type))
+
+    async def fake_enqueue(file_id: str):
+        enqueued.append(file_id)
+
+    monkeypatch.setattr("app.routes.upload.StorageService.write_bytes", fake_write_bytes)
+    monkeypatch.setattr("app.routes.upload.enqueue_ingestion", fake_enqueue)
+
+    upload = UploadFile(
+        file=BytesIO(b"hello world"),
+        filename="sample.pdf",
+        headers=Headers({"content-type": "application/pdf"}),
+    )
+    db = FakeDB()
+
+    resp = await local_upload(upload, db=db)
+
+    assert resp.fileId
+    assert resp.s3Key.endswith("/sample.pdf")
+    assert resp.s3Key.startswith(f"raw/{resp.fileId}/")
+    assert writes == [(resp.s3Key, b"hello world", "application/pdf")]
+    assert enqueued == [resp.fileId]
+    assert db.rows[0].s3_key == resp.s3Key

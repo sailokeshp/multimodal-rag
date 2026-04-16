@@ -26,6 +26,7 @@ settings = get_settings()
 
 ALLOWED_MIME_TYPES = {
     "application/pdf",
+    "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "image/jpeg",
     "image/png",
@@ -91,7 +92,8 @@ async def local_upload(
 ) -> UploadRequestOut:
     """
     Accepts a multipart file upload directly (no presigned URL needed).
-    For local development only — skips S3 and saves to LOCAL_STORAGE_PATH.
+    Uses the configured storage backend, so local mode writes to disk and
+    production writes to S3.
     """
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
@@ -108,18 +110,20 @@ async def local_upload(
 
     checksum = hashlib.sha256(content).hexdigest()
     file_id = uuid.uuid4()
-    ext = os.path.splitext(file.filename or "file")[1]
-    s3_key = f"raw/{file_id}/{file.filename}"
+    file_name = file.filename or "upload"
+    ext = os.path.splitext(file_name)[1]
+    s3_key = f"raw/{file_id}/{file_name}"
 
-    local_path = os.path.join(settings.local_storage_path, str(file_id))
-    os.makedirs(local_path, exist_ok=True)
-    dest = os.path.join(local_path, file.filename or "upload")
-    with open(dest, "wb") as f:
-        f.write(content)
+    storage = StorageService()
+    storage.write_bytes(
+        s3_key,
+        content,
+        content_type=file.content_type or "application/octet-stream",
+    )
 
     file_row = File(
         id=file_id,
-        file_name=file.filename,
+        file_name=file_name,
         file_type=ext.lstrip(".").lower(),
         mime_type=file.content_type,
         s3_key=s3_key,
@@ -132,5 +136,9 @@ async def local_upload(
     await db.flush()
 
     await enqueue_ingestion(str(file_id))
-    logger.info("Local upload complete, ingestion enqueued: file_id=%s", file_id)
+    logger.info(
+        "Direct upload complete via %s storage, ingestion enqueued: file_id=%s",
+        "local" if settings.app_env == "local" else "remote",
+        file_id,
+    )
     return UploadRequestOut(fileId=str(file_id), uploadUrl="", s3Key=s3_key)

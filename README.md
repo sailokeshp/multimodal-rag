@@ -222,6 +222,37 @@ For AWS deployment:
 
 > AWS free-trial note: avoid always-on GPU endpoints. Use `GEN_MODEL_BACKEND=google_ai` for generation.
 
+## GitHub Actions
+
+This repo now supports a simple GitHub Actions CI/CD setup:
+
+- `CI` runs on pull requests and pushes to `main`
+- `Deploy to EC2` runs automatically after `CI` succeeds for a push to `main`
+- `Deploy to EC2` can also be started manually from the Actions tab
+
+The deploy workflow uses the existing EC2 deployment model in `infra/aws/deploy.sh`, so local deploys and GitHub deploys follow the same path.
+
+Required GitHub repository secrets:
+
+- `EC2_HOST`
+- `EC2_SSH_KEY`
+- `POSTGRES_PASSWORD`
+- `AWS_REGION`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `S3_BUCKET`
+- `SQS_QUEUE_URL`
+- `GROQ_API_KEY`
+
+Optional GitHub repository secrets:
+
+- `GOOGLE_AI_API_KEY`
+
+Notes:
+
+- `infra/aws/provision.sh` already updates `EC2_HOST`, `S3_BUCKET`, and `SQS_QUEUE_URL` automatically when the GitHub CLI is authenticated.
+- The production workflow deploys the lightweight EC2-safe settings we verified in AWS: text/image embeddings disabled, S3 + SQS enabled, and Groq answer generation using `llama-3.1-8b-instant`.
+
 ---
 
 ## Troubleshooting

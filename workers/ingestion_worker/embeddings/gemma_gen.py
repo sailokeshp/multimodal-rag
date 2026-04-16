@@ -37,7 +37,7 @@ from typing import ClassVar
 
 logger = logging.getLogger(__name__)
 
-_BACKEND = os.getenv("GEN_MODEL_BACKEND", "groq")
+_BACKEND = os.getenv("GEN_MODEL_BACKEND", "google_ai")
 _GEN_MODEL_NAME = os.getenv("GEN_MODEL_NAME", "gemma2-9b-it")
 _ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 _GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -248,7 +248,7 @@ class GemmaGenerationAdapter:
             self._backend = _LocalHFBackend()
         elif _BACKEND == "google_ai":
             self._backend = _GoogleAIBackend()
-        else:  # "groq" is the default
+        else:  # "groq" remains supported as an explicit opt-in backend
             self._backend = _GroqBackend()
 
     def generate(self, prompt: str) -> str:

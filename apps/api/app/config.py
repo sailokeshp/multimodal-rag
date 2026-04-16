@@ -27,6 +27,9 @@ class Settings:
     )
     # Dimension must match the chosen model — set explicitly when overriding.
     text_embed_dim: int = int(os.getenv("TEXT_EMBED_DIM", "384"))
+    enable_text_embeddings: bool = os.getenv(
+        "ENABLE_TEXT_EMBEDDINGS", "true"
+    ).lower() == "true"
 
     # ── Image embedding ───────────────────────────────────────────────────────
     # SigLIP2 so400m produces 1152-dimensional embeddings.
@@ -34,10 +37,15 @@ class Settings:
         "IMAGE_EMBED_MODEL_NAME", "google/siglip2-so400m-patch16-384"
     )
     image_embed_dim: int = int(os.getenv("IMAGE_EMBED_DIM", "1152"))
+    # Disabled by default because the optional SigLIP2 dependencies are not
+    # installed in the default worker image and the model is memory-heavy.
+    enable_image_embeddings: bool = os.getenv(
+        "ENABLE_IMAGE_EMBEDDINGS", "false"
+    ).lower() == "true"
 
     # ── Generation ────────────────────────────────────────────────────────────
     # Backend: "groq" (default, free), "google_ai" (free), or "local" (needs RAM).
-    gen_model_backend: str = os.getenv("GEN_MODEL_BACKEND", "groq")
+    gen_model_backend: str = os.getenv("GEN_MODEL_BACKEND", "google_ai")
     gen_model_name: str = os.getenv("GEN_MODEL_NAME", "gemma2-9b-it")
     # Groq backend (default — gemma2-9b-it, free, no credit card):
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")

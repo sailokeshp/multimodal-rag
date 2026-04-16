@@ -113,8 +113,8 @@ async def _run_pipeline(db: AsyncSession, file_id: str) -> None:
     file_row.size_bytes = len(file_bytes)
     await db.flush()
 
-    text_adapter = EmbeddingGemmaAdapter()
-    image_adapter = SigLIP2ImageAdapter()
+    text_adapter = EmbeddingGemmaAdapter() if settings.enable_text_embeddings else None
+    image_adapter = SigLIP2ImageAdapter() if settings.enable_image_embeddings else None
 
     # 4–10. Dispatch by file type
     file_type = file_row.file_type.lower().lstrip(".")
@@ -141,6 +141,26 @@ async def _run_pipeline(db: AsyncSession, file_id: str) -> None:
     file_row.processed_at = datetime.utcnow()
     await db.commit()
     logger.info("Ingestion complete: file_id=%s", file_id)
+
+
+def _safe_embed_text(text_adapter, text: str) -> list[float] | None:
+    if text_adapter is None:
+        return None
+    try:
+        return text_adapter.embed_text(text)
+    except Exception as exc:
+        logger.warning("Text embedding skipped: %s", exc)
+        return None
+
+
+def _safe_embed_image(image_adapter, image_bytes: bytes) -> list[float] | None:
+    if image_adapter is None:
+        return None
+    try:
+        return image_adapter.embed_image(image_bytes)
+    except Exception as exc:
+        logger.warning("Image embedding skipped: %s", exc)
+        return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -195,7 +215,7 @@ async def _ingest_pdf(
                             chunk_index=chunk.chunk_index,
                             content=chunk.content,
                             token_count=chunk.token_count,
-                            embedding=text_adapter.embed_text(chunk.content),
+                            embedding=_safe_embed_text(text_adapter, chunk.content),
                         ))
             except Exception as exc:
                 logger.warning("OCR failed for page %d: %s", page.page_number, exc)
@@ -220,7 +240,7 @@ async def _ingest_pdf(
                     chunk_index=chunk.chunk_index,
                     content=chunk.content,
                     token_count=chunk.token_count,
-                    embedding=text_adapter.embed_text(chunk.content),
+                    embedding=_safe_embed_text(text_adapter, chunk.content),
                 ))
 
         # Page summary
@@ -233,7 +253,7 @@ async def _ingest_pdf(
                 page_start=page.page_number,
                 page_end=page.page_number,
                 content=summary_text,
-                embedding=text_adapter.embed_text(summary_text),
+                embedding=_safe_embed_text(text_adapter, summary_text),
             ))
 
         # Inline images from this page
@@ -250,7 +270,7 @@ async def _ingest_pdf(
                     page_number=page.page_number,
                     image_role="inline_extracted",
                     s3_key=img_key,
-                    embedding=image_adapter.embed_image(img_bytes),
+                    embedding=_safe_embed_image(image_adapter, img_bytes),
                 ))
             except Exception as exc:
                 logger.warning("Failed to store inline image: %s", exc)
@@ -281,7 +301,7 @@ async def _ingest_docx(
             chunk_index=chunk.chunk_index,
             content=chunk.content,
             token_count=chunk.token_count,
-            embedding=text_adapter.embed_text(chunk.content),
+            embedding=_safe_embed_text(text_adapter, chunk.content),
         ))
 
     for idx, img_bytes in enumerate(result.inline_image_bytes):
@@ -293,7 +313,7 @@ async def _ingest_docx(
                 file_id=file_row.id,
                 image_role="inline_extracted",
                 s3_key=img_key,
-                embedding=image_adapter.embed_image(img_bytes),
+                embedding=_safe_embed_image(image_adapter, img_bytes),
             ))
         except Exception as exc:
             logger.warning("Failed to store inline DOCX image %d: %s", idx, exc)
@@ -338,7 +358,7 @@ async def _ingest_image(
         width=parsed.width,
         height=parsed.height,
         ocr_text=ocr_text,
-        embedding=image_adapter.embed_image(file_bytes),
+        embedding=_safe_embed_image(image_adapter, file_bytes),
     ))
 
     await db.flush()

@@ -100,15 +100,19 @@ info "Code synced"
 info "Uploading .env…"
 scp ${SSH_OPTS} "${ENV_FILE}" "ubuntu@${PUBLIC_IP}:${REMOTE_DIR}/.env"
 
-# ── Install Docker Compose plugin if missing ──────────────────────────────────
-${SSH} "bash -s" << 'REMOTE'
-if ! docker compose version &>/dev/null 2>&1; then
-    echo "[REMOTE] Installing docker-compose-plugin…"
-    sudo apt-get update -y -qq
-    sudo apt-get install -y -qq docker-compose-plugin
-fi
-echo "[REMOTE] $(docker compose version)"
-REMOTE
+# ── Wait for user_data (Docker install) to finish ────────────────────────────
+info "Waiting for Docker to be ready on EC2 (user_data may still be running)…"
+for i in $(seq 1 30); do
+    if ${SSH} "docker version &>/dev/null 2>&1 || sudo docker version &>/dev/null 2>&1"; then
+        info "Docker is ready"
+        break
+    fi
+    if [ "${i}" -eq 30 ]; then
+        error "Docker never became ready after 5 minutes. Check /var/log/user-data.log on the instance."
+    fi
+    echo -n "."
+    sleep 10
+done
 
 # ── Pull latest images & start stack ─────────────────────────────────────────
 info "Starting production stack on EC2…"

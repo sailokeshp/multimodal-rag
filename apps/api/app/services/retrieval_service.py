@@ -118,6 +118,8 @@ class RetrievalService:
     # ── Embedding helpers (synchronous — run in executor) ─────────────────────
 
     def _embed_text(self, query: str) -> list[float] | None:
+        if not settings.enable_text_embeddings:
+            return None
         try:
             from workers.ingestion_worker.embeddings.embedding_gemma import (
                 EmbeddingGemmaAdapter,
@@ -128,6 +130,8 @@ class RetrievalService:
             return None
 
     def _embed_image_query(self, query: str) -> list[float] | None:
+        if not settings.enable_image_embeddings:
+            return None
         try:
             from workers.ingestion_worker.embeddings.siglip2_text import (
                 SigLIP2TextAdapter,

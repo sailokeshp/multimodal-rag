@@ -20,13 +20,11 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 KEY_NAME="${KEY_NAME:-stockmind-key}"
 REGION="${REGION:-$(aws configure get region || echo us-east-1)}"
-INSTANCE_TYPE="t2.micro"
+INSTANCE_TYPE="t3.micro"
 AMI_ID=""                         # auto-detected below
 SG_NAME="multimodal-rag-sg"
 S3_BUCKET=""                      # auto-generated below
 SQS_QUEUE_NAME="multimodal-rag-ingestion"
-IAM_ROLE_NAME="multimodal-rag-ec2-role"
-IAM_INSTANCE_PROFILE="multimodal-rag-ec2-profile"
 TAG="multimodal-rag"
 
 # Colors
@@ -104,38 +102,6 @@ else
     info "Security group already exists: ${SG_ID}"
 fi
 
-# ── IAM role for EC2 (S3 + SQS access) ──────────────────────────────────────
-info "IAM role: ${IAM_ROLE_NAME}"
-if ! aws iam get-role --role-name "${IAM_ROLE_NAME}" &>/dev/null; then
-    aws iam create-role \
-        --role-name "${IAM_ROLE_NAME}" \
-        --assume-role-policy-document \
-        '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
-        --output text >/dev/null
-    # Attach S3 + SQS managed policies
-    aws iam attach-role-policy --role-name "${IAM_ROLE_NAME}" \
-        --policy-arn arn:aws:iam::aws:policy/AmazonS3FullAccess
-    aws iam attach-role-policy --role-name "${IAM_ROLE_NAME}" \
-        --policy-arn arn:aws:iam::aws:policy/AmazonSQSFullAccess
-    info "IAM role created"
-else
-    info "IAM role already exists — skipping"
-fi
-
-# Create instance profile
-if ! aws iam get-instance-profile --instance-profile-name "${IAM_INSTANCE_PROFILE}" &>/dev/null; then
-    aws iam create-instance-profile \
-        --instance-profile-name "${IAM_INSTANCE_PROFILE}" --output text >/dev/null
-    aws iam add-role-to-instance-profile \
-        --instance-profile-name "${IAM_INSTANCE_PROFILE}" \
-        --role-name "${IAM_ROLE_NAME}"
-    info "Instance profile created"
-    # IAM is eventually-consistent; give it a moment
-    sleep 10
-else
-    info "Instance profile already exists — skipping"
-fi
-
 # ── Latest Ubuntu 22.04 LTS AMI ───────────────────────────────────────────────
 info "Looking up latest Ubuntu 22.04 AMI in ${REGION}…"
 AMI_ID=$(aws ec2 describe-images \
@@ -160,7 +126,6 @@ if [ "${INSTANCE_ID}" = "None" ] || [ -z "${INSTANCE_ID}" ]; then
         --instance-type "${INSTANCE_TYPE}" \
         --key-name "${KEY_NAME}" \
         --security-group-ids "${SG_ID}" \
-        --iam-instance-profile "Name=${IAM_INSTANCE_PROFILE}" \
         --user-data file://user_data.sh \
         --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":20,"VolumeType":"gp2"}}]' \
         --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${TAG}}]" \

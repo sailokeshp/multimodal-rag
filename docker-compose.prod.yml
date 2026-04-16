@@ -1,5 +1,5 @@
 version: "3.9"
-# Production docker-compose — runs on EC2 t2.micro.
+# Production docker-compose — runs on EC2 t3.micro.
 # All services in one container host to stay within free tier.
 # Postgres runs locally (no RDS) to avoid costs.
 
