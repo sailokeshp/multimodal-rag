@@ -116,9 +116,29 @@ done
 
 # ── Pull latest images & start stack ─────────────────────────────────────────
 info "Starting production stack on EC2…"
+
+# Load AWS creds from .env to pass into Docker daemon
+AWS_KEY=$(grep '^AWS_ACCESS_KEY_ID=' "${ENV_FILE}" | cut -d= -f2-)
+AWS_SECRET=$(grep '^AWS_SECRET_ACCESS_KEY=' "${ENV_FILE}" | cut -d= -f2-)
+AWS_REGION_VAL=$(grep '^AWS_REGION=' "${ENV_FILE}" | cut -d= -f2-)
+
 ${SSH} "bash -s" << REMOTE
 set -e
 cd ${REMOTE_DIR}
+
+# ── Inject AWS credentials into Docker daemon so awslogs driver can reach CloudWatch
+# (No EC2 IAM role attached — credentials come from .env)
+sudo mkdir -p /etc/systemd/system/docker.service.d
+cat <<'DENV' | sudo tee /etc/systemd/system/docker.service.d/aws-env.conf >/dev/null
+[Service]
+Environment="AWS_ACCESS_KEY_ID=${AWS_KEY}"
+Environment="AWS_SECRET_ACCESS_KEY=${AWS_SECRET}"
+Environment="AWS_DEFAULT_REGION=${AWS_REGION_VAL:-us-east-1}"
+DENV
+sudo systemctl daemon-reload
+sudo systemctl restart docker
+# Wait for Docker socket to come back
+until sudo docker version >/dev/null 2>&1; do sleep 1; done
 
 # Ensure docker is running
 sudo systemctl start docker 2>/dev/null || true

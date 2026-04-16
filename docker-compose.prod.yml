@@ -1,13 +1,16 @@
 version: "3.9"
 # Production docker-compose — tuned for a single EC2 host.
-# Postgres runs locally (no RDS) to avoid costs.
-# Logs written to json-file with rotation; CloudWatch agent tails them separately.
+# Logs shipped to CloudWatch via awslogs driver.
+# Docker daemon must have AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY in its
+# environment (set by deploy.sh via systemd drop-in) because no EC2 IAM role
+# is attached.
 
-x-logging: &json-logging
-  driver: json-file
+x-logging: &cloudwatch-logging
+  driver: awslogs
   options:
-    max-size: "50m"
-    max-file: "5"
+    awslogs-region: "${AWS_REGION:-us-east-1}"
+    awslogs-group: /rag/production
+    awslogs-create-group: "true"
 
 services:
   postgres:
@@ -26,7 +29,13 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    logging: *json-logging
+    logging:
+      <<: *cloudwatch-logging
+      options:
+        awslogs-region: "${AWS_REGION:-us-east-1}"
+        awslogs-group: /rag/production
+        awslogs-stream: postgres
+        awslogs-create-group: "true"
 
   api:
     build:
@@ -46,7 +55,14 @@ services:
       - hf_cache:/models/huggingface
     expose:
       - "8000"
-    logging: *json-logging
+    logging:
+      <<: *cloudwatch-logging
+      options:
+        awslogs-region: "${AWS_REGION:-us-east-1}"
+        awslogs-group: /rag/production
+        awslogs-stream: api
+        awslogs-create-group: "true"
+        awslogs-multiline-pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}"
 
   worker:
     build:
@@ -64,7 +80,14 @@ services:
     volumes:
       - uploads:/tmp/rag_uploads
       - hf_cache:/models/huggingface
-    logging: *json-logging
+    logging:
+      <<: *cloudwatch-logging
+      options:
+        awslogs-region: "${AWS_REGION:-us-east-1}"
+        awslogs-group: /rag/production
+        awslogs-stream: worker
+        awslogs-create-group: "true"
+        awslogs-multiline-pattern: "^[0-9]{4}-[0-9]{2}-[0-9]{2}"
 
   web:
     image: nginx:alpine
@@ -77,7 +100,13 @@ services:
       - ./infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - api
-    logging: *json-logging
+    logging:
+      <<: *cloudwatch-logging
+      options:
+        awslogs-region: "${AWS_REGION:-us-east-1}"
+        awslogs-group: /rag/production
+        awslogs-stream: nginx
+        awslogs-create-group: "true"
 
 volumes:
   pgdata:
