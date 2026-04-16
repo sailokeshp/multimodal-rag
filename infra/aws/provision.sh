@@ -9,7 +9,7 @@
 #   chmod +x provision.sh && ./provision.sh
 #
 # Free-tier-friendly resources created:
-#   EC2 t3.micro        (conservative default for small AWS trial deployments)
+#   EC2 m7i-flex.large  (best post-July-2025 trial fit for semantic retrieval)
 #   S3 bucket           (5 GB / 20k GET / 2k PUT free)
 #   SQS queue           (1M requests/month free)
 #   Security group      (port 22, 80, 8000)
@@ -20,7 +20,8 @@ set -euo pipefail
 # ── Configuration ─────────────────────────────────────────────────────────────
 KEY_NAME="${KEY_NAME:-stockmind-key}"
 REGION="${REGION:-$(aws configure get region || echo us-east-1)}"
-INSTANCE_TYPE="t3.micro"
+INSTANCE_TYPE="${INSTANCE_TYPE:-m7i-flex.large}"
+ROOT_VOLUME_GB="${ROOT_VOLUME_GB:-40}"
 AMI_ID=""                         # auto-detected below
 SG_NAME="multimodal-rag-sg"
 S3_BUCKET=""                      # auto-generated below
@@ -127,7 +128,7 @@ if [ "${INSTANCE_ID}" = "None" ] || [ -z "${INSTANCE_ID}" ]; then
         --key-name "${KEY_NAME}" \
         --security-group-ids "${SG_ID}" \
         --user-data file://user_data.sh \
-        --block-device-mappings '[{"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":20,"VolumeType":"gp2"}}]' \
+        --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_VOLUME_GB},\"VolumeType\":\"gp3\"}}]" \
         --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=${TAG}}]" \
         --query "Instances[0].InstanceId" \
         --output text)
@@ -192,6 +193,7 @@ echo -e "${G} Provisioning complete!${NC}"
 echo -e "${G}═══════════════════════════════════════════${NC}"
 echo ""
 echo "  EC2 Instance:  ${INSTANCE_ID}"
+echo "  Instance Type: ${INSTANCE_TYPE}"
 echo "  Public IP:     ${PUBLIC_IP}"
 echo "  S3 Bucket:     ${S3_BUCKET}"
 echo "  SQS Queue:     ${SQS_URL}"

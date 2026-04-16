@@ -51,3 +51,22 @@ export function thumbnailUrl(rawUrl) {
   // For local dev: serve from the API's static-file proxy
   return `${BASE}/files/thumbnail/${encodeURIComponent(rawUrl)}`
 }
+
+/** List all uploaded files (DAM). Returns FileAssetOut[]. */
+export async function listFiles() {
+  const resp = await fetch(`${BASE}/files`)
+  return _json(resp)
+}
+
+/** Get full asset detail with embedding preview. Returns FileDetailOut. */
+export async function getFileDetail(fileId) {
+  const resp = await fetch(`${BASE}/files/${fileId}/detail`)
+  return _json(resp)
+}
+
+/** Delete a file and all its indexed data. */
+export async function deleteFile(fileId) {
+  const resp = await fetch(`${BASE}/files/${fileId}`, { method: 'DELETE' })
+  if (resp.status === 204) return
+  throw new Error(`Delete failed: ${resp.status}`)
+}

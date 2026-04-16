@@ -5,7 +5,7 @@ set -euo pipefail
 exec > /var/log/user-data.log 2>&1
 
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg lsb-release git wget unzip tesseract-ocr
+apt-get install -y ca-certificates curl gnupg lsb-release git wget unzip tesseract-ocr cloud-guest-utils
 
 # ── Install Docker from official Docker apt repo ──────────────────────────────
 install -m 0755 -d /etc/apt/keyrings
@@ -29,6 +29,19 @@ systemctl start docker
 # Create app directory
 mkdir -p /opt/rag
 chown ubuntu:ubuntu /opt/rag
+
+# Add swap so ML-heavy builds and embedding workloads have headroom.
+SWAP_SIZE_GB="${SWAP_SIZE_GB:-4}"
+if ! swapon --show | grep -q '^/swapfile'; then
+    if [ ! -f /swapfile ]; then
+        fallocate -l "${SWAP_SIZE_GB}G" /swapfile || \
+            dd if=/dev/zero of=/swapfile bs=1M count=$((SWAP_SIZE_GB * 1024))
+        chmod 600 /swapfile
+        mkswap /swapfile
+    fi
+    swapon /swapfile
+fi
+grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
 # Placeholder systemd service — deploy.sh will populate the real .env and code
 cat > /etc/systemd/system/rag.service << 'EOF'

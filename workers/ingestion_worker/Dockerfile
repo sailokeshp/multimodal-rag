@@ -7,6 +7,8 @@
 
 FROM python:3.12-slim
 
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
 # System dependencies for OCR (Tesseract) and PDF rendering (PyMuPDF needs libGL)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
@@ -18,6 +20,7 @@ WORKDIR /workspace
 
 # Install API dependencies first (lighter, cached layer)
 COPY apps/api/requirements.txt /tmp/api-requirements.txt
+RUN pip install --no-cache-dir --index-url "${TORCH_INDEX_URL}" torch
 RUN pip install --no-cache-dir -r /tmp/api-requirements.txt
 
 # Install worker dependencies

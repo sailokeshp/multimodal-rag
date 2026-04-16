@@ -136,13 +136,20 @@ Set via `TEXT_EMBED_MODEL_NAME` + `TEXT_EMBED_DIM`.
 
 ### Image embeddings (SigLIP2)
 
-Requires `transformers` and `torch`:
+`make install` already installs the dependency chain used by the Docker images.
+For local experiments with heavier models, `make install-ml` is still useful:
 
 ```bash
 make install-ml
 ```
 
 Set `IMAGE_EMBED_MODEL_NAME=google/siglip2-so400m-patch16-384` (default, dim=1152).
+For the trial-friendly AWS semantic profile, also set:
+
+```env
+ENABLE_IMAGE_EMBEDDINGS=true
+IMAGE_QUERY_EMBED_POLICY=image_only
+```
 
 SigLIP2 requires ~2 GB RAM. It runs on CPU but is slow. A machine with ≥8 GB RAM is recommended.
 
@@ -220,9 +227,12 @@ For AWS deployment:
 4. Run the worker on ECS Fargate or EC2 (on-demand to control cost)
 5. Run the API on Lambda + API Gateway or ECS
 
-> AWS free-trial note: avoid always-on GPU endpoints. Use `GEN_MODEL_BACKEND=google_ai` for generation.
+> AWS free-trial note: avoid always-on GPU endpoints. Use `GEN_MODEL_BACKEND=google_ai` or `groq` for generation.
 
-For the current EC2 deployment path in this repo, we intentionally default to a small burstable instance and a lightweight runtime profile. That keeps the app practical on low-cost or free-trial-style infrastructure, but it also means the production deployment may run without the heavier embedding features enabled.
+For AWS accounts created on or after July 15, 2025, the practical semantic-search
+baseline in this repo is `m7i-flex.large` with swap enabled, dense text retrieval
+on, and `IMAGE_QUERY_EMBED_POLICY=image_only` so the API only loads SigLIP2 for
+image-intent queries.
 
 ## GitHub Actions
 
@@ -265,7 +275,7 @@ Optional GitHub repository secrets:
 Notes:
 
 - `infra/aws/provision.sh` already updates `EC2_HOST`, `S3_BUCKET`, and `SQS_QUEUE_URL` automatically when the GitHub CLI is authenticated.
-- The production workflow deploys the lightweight EC2-safe settings we verified in AWS: text/image embeddings disabled, S3 + SQS enabled, and Groq answer generation using `llama-3.1-8b-instant`.
+- The production workflow now deploys the trial-friendly semantic profile we verified for `m7i-flex.large`: text embeddings enabled, image embeddings enabled with `IMAGE_QUERY_EMBED_POLICY=image_only`, S3 + SQS enabled, and Groq answer generation using `llama-3.1-8b-instant`.
 
 ---
 

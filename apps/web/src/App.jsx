@@ -1,14 +1,16 @@
 import { useState } from 'react'
 import UploadView from './components/upload/UploadView'
 import SearchView from './components/search/SearchView'
+import AssetBrowser from './components/dam/AssetBrowser'
 
 const TABS = [
-  { id: 'upload', label: '⬆ Upload', icon: '📂' },
-  { id: 'search', label: '🔍 Search', icon: '🔍' },
+  { id: 'assets', label: '🗂 Assets' },
+  { id: 'upload', label: '⬆ Upload' },
+  { id: 'search', label: '🔍 Search' },
 ]
 
 export default function App() {
-  const [tab, setTab] = useState('upload')
+  const [tab, setTab] = useState('assets')
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -44,11 +46,9 @@ export default function App() {
 
       {/* Content */}
       <main className="max-w-5xl mx-auto px-4 py-6">
-        {tab === 'upload' ? (
-          <UploadView onSwitchToSearch={() => setTab('search')} />
-        ) : (
-          <SearchView />
-        )}
+        {tab === 'assets' && <AssetBrowser onUpload={() => setTab('upload')} />}
+        {tab === 'upload' && <UploadView onSwitchToSearch={() => setTab('search')} />}
+        {tab === 'search' && <SearchView />}
       </main>
     </div>
   )

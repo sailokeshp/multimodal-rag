@@ -15,7 +15,9 @@ pytesseract>=0.3.13       # Local OCR (requires system Tesseract binary)
 sentence-transformers>=3.0.0   # BAAI/bge-* models for CPU-friendly text embedding
 
 # ── Image embeddings (SigLIP2) ────────────────────────────────────────────────
-# Uncomment when running with a machine that has enough RAM (~2 GB for SigLIP2):
+# sentence-transformers already pulls in torch/transformers transitively.
+# The real constraint is RAM/runtime, not package availability.
+# SigLIP2 itself needs roughly ~2 GB RAM when loaded on CPU.
 # transformers>=4.44.0
 # torch>=2.2.0           # CPU-only torch is ~200 MB; GPU torch is separate
 # accelerate>=0.33.0

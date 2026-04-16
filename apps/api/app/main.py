@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.db.session import engine
 from app.db.models import Base
-from app.routes import upload, search, answer, status
+from app.routes import upload, search, answer, status, assets
 from app.utils.security import verify_api_key
 
 logging.basicConfig(
@@ -54,11 +54,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 app.include_router(upload.router)
+app.include_router(assets.router)
 app.include_router(status.router)
 app.include_router(search.router)
 app.include_router(answer.router)

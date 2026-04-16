@@ -42,6 +42,12 @@ class Settings:
     enable_image_embeddings: bool = os.getenv(
         "ENABLE_IMAGE_EMBEDDINGS", "false"
     ).lower() == "true"
+    # Trial-friendly query-time policy:
+    #   image_only -> only image-intent queries load SigLIP2 in the API
+    #   always     -> every query searches image vectors too
+    image_query_embed_policy: str = os.getenv(
+        "IMAGE_QUERY_EMBED_POLICY", "image_only"
+    ).lower()
 
     # ── Generation ────────────────────────────────────────────────────────────
     # Backend: "groq" (default, free), "google_ai" (free), or "local" (needs RAM).

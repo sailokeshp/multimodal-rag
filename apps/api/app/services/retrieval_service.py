@@ -53,17 +53,25 @@ class RetrievalService:
 
         query_type = self._classify_query(query)
 
+        image_embedding_future = loop.create_future()
+        image_embedding_future.set_result(None)
+        if self._should_embed_image_query(query_type):
+            image_embedding_future = loop.run_in_executor(
+                _executor, self._embed_image_query, query
+            )
+
         # Run CPU-bound embedding in thread pool so the event loop stays free.
         text_embedding, image_embedding = await asyncio.gather(
             loop.run_in_executor(_executor, self._embed_text, query),
-            loop.run_in_executor(_executor, self._embed_image_query, query),
+            image_embedding_future,
         )
 
-        text_hits, image_hits, lexical_hits = await asyncio.gather(
-            self._vector_search_text(text_embedding, top_k_text, filters),
-            self._vector_search_image(image_embedding, top_k_image, filters),
-            self._lexical_search(query, top_k_text, filters),
-        )
+        # SQLAlchemy AsyncSession does not permit concurrent execute() calls on
+        # the same session while provisioning/using a connection, so keep the
+        # DB-bound retrieval passes sequential for stability.
+        text_hits = await self._vector_search_text(text_embedding, top_k_text, filters)
+        image_hits = await self._vector_search_image(image_embedding, top_k_image, filters)
+        lexical_hits = await self._lexical_search(query, top_k_text, filters)
 
         merged = self._merge_and_rerank(
             text_hits, image_hits, lexical_hits, top_k_final, query_type
@@ -140,6 +148,13 @@ class RetrievalService:
         except Exception as exc:
             logger.warning("Image-query embedding unavailable: %s", exc)
             return None
+
+    def _should_embed_image_query(self, query_type: str) -> bool:
+        if not settings.enable_image_embeddings:
+            return False
+        if settings.image_query_embed_policy == "always":
+            return True
+        return query_type == "image"
 
     # ── Vector searches ───────────────────────────────────────────────────────
 

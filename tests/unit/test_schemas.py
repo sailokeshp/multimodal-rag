@@ -91,6 +91,7 @@ def test_config_embedding_flags_defaults():
     s = Settings()
     assert s.enable_text_embeddings is True
     assert s.enable_image_embeddings is False
+    assert s.image_query_embed_policy == "image_only"
 
 
 @pytest.mark.asyncio

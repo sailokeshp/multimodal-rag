@@ -24,6 +24,7 @@ os.environ.setdefault("TEXT_EMBED_DIM", "384")
 os.environ.setdefault("IMAGE_EMBED_DIM", "1152")
 os.environ.setdefault("ENABLE_TEXT_EMBEDDINGS", "true")
 os.environ.setdefault("ENABLE_IMAGE_EMBEDDINGS", "false")
+os.environ.setdefault("IMAGE_QUERY_EMBED_POLICY", "image_only")
 os.environ.setdefault("GEN_MODEL_BACKEND", "google_ai")
 os.environ.setdefault("ENABLE_GROUNDED_ANSWER", "false")
 os.environ.setdefault("RETRIEVAL_SCORE_THRESHOLD", "0.0")  # no threshold in tests

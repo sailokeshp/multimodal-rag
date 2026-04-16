@@ -126,11 +126,15 @@ sudo systemctl start docker 2>/dev/null || true
 # Add ubuntu to docker group (idempotent)
 sudo usermod -aG docker ubuntu 2>/dev/null || true
 
+# Free disk from old builders/layers before rebuilding heavier semantic images.
+sudo docker builder prune -af >/dev/null 2>&1 || true
+sudo docker image prune -af >/dev/null 2>&1 || true
+
 # Pull base images
 sudo docker compose -f docker-compose.prod.yml pull --quiet 2>/dev/null || true
 
 # Build app images (api + worker) from source
-sudo docker compose -f docker-compose.prod.yml build --quiet
+sudo docker compose -f docker-compose.prod.yml build --pull --quiet
 
 # Restart stack
 sudo docker compose -f docker-compose.prod.yml down --remove-orphans 2>/dev/null || true
