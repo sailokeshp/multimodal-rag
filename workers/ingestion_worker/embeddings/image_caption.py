@@ -1,5 +1,5 @@
 """
-Image captioning via Groq Vision (llama-3.2-11b-vision-preview).
+Image captioning via Groq Vision (meta-llama/llama-4-scout-17b-16e-instruct).
 
 Generates a rich text description of an image at ingest time.
 The caption is stored as a DocumentChunk so it is:
@@ -44,7 +44,7 @@ def generate_caption(image_bytes: bytes, groq_api_key: str) -> str | None:
 
         client = Groq(api_key=groq_api_key)
         response = client.chat.completions.create(
-            model="llama-3.2-11b-vision-preview",
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
             messages=[
                 {
                     "role": "user",

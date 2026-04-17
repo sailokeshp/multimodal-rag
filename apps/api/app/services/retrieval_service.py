@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db.models import DocumentChunk, File, Image, SearchLog
 from app.schemas.search import DocumentChunkResult, ImageResult, SearchFilters
+from app.services.storage_service import StorageService
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -255,16 +256,25 @@ class RetrievalService:
             # SigLIP2 cross-modal scores are typically lower than same-modal
             # text scores, so apply a more lenient threshold for image results.
             image_threshold = min(settings.retrieval_score_threshold, 0.20)
+            storage = StorageService()
             for image, file_name, score in rows:
                 score_f = float(score)
                 if score_f < image_threshold:
                     continue
+                thumb_url = None
+                if image.thumbnail_s3_key:
+                    try:
+                        thumb_url = storage.generate_presigned_get_url(
+                            image.thumbnail_s3_key, expires_in=3600
+                        )
+                    except Exception as exc:
+                        logger.warning("Failed to generate presigned URL for %s: %s", image.thumbnail_s3_key, exc)
                 results.append(
                     ImageResult(
                         fileId=str(image.file_id),
                         fileName=file_name,
                         imageId=str(image.id),
-                        thumbnailUrl=image.thumbnail_s3_key,
+                        thumbnailUrl=thumb_url,
                         caption=image.caption_text,
                         score=round(score_f, 4),
                     )

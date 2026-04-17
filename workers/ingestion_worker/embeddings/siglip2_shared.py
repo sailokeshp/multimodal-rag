@@ -45,7 +45,12 @@ def get_model():
         logger.info("Loading SigLIP2 model: %s (this may take a moment)…", MODEL_NAME)
         try:
             import torch
-            from transformers import AutoProcessor, AutoModel
+            try:
+                from transformers import AutoProcessor, AutoModel
+            except ImportError:
+                # Older transformers versions may not export AutoProcessor/AutoModel
+                # from the top-level namespace; fall back to the concrete classes.
+                from transformers import SiglipProcessor as AutoProcessor, SiglipModel as AutoModel
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             logger.info("SigLIP2 device: %s", device)
