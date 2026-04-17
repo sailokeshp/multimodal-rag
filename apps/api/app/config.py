@@ -78,6 +78,12 @@ class Settings:
     # Fetch this many times more candidates from vector search before reranking.
     rerank_fetch_multiplier: int = int(os.getenv("RERANK_FETCH_MULTIPLIER", "3"))
 
+    # ── Document diversity filter ─────────────────────────────────────────────
+    # Maximum results returned from any single source document.
+    # Prevents one large document from monopolising all top-K slots when
+    # querying across 10+ documents.  Set to 0 to disable.
+    diversity_max_per_file: int = int(os.getenv("DIVERSITY_MAX_PER_FILE", "3"))
+
     # ── Answer generation context window ─────────────────────────────────────
     # Maximum tokens to include in the LLM context (prompt + context blocks).
     # At ~4 chars/token: 3000 tokens ≈ 12,000 chars ≈ ~10 dense paragraphs.

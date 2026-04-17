@@ -163,10 +163,52 @@ def _safe_embed_image(image_adapter, image_bytes: bytes) -> list[float] | None:
         return None
 
 
+def _build_contextual_embed_texts(
+    file_name: str,
+    db_chunks: list,
+    contents: list[str],
+) -> list[str]:
+    """
+    Prepend a document/section/page context header to each chunk's text
+    *before* it is passed to the embedding model.
+
+    Technique: Contextual Chunk Headers (NirDiamant/rag_techniques #10)
+
+    Why this matters:
+      A chunk reading "Revenue grew 23% year-over-year" has no idea it came
+      from the "Q3 Financial Results" section of "annual_report.pdf".
+      The embedding model sees only the bare sentence.
+
+      By prepending "[Document: annual_report.pdf | Section: Q3 Financial
+      Results | Page: 5]" the embedding is anchored in the document space of
+      the answer — dramatically improving retrieval for queries that include
+      document-level context ("what does the annual report say about Q3?").
+
+    The stored chunk.content is NOT modified — clean text is preserved for
+    display in the UI and for the LLM answer prompt.
+    Only the vector embedding input is enriched.
+    """
+    enriched = []
+    for chunk, content in zip(db_chunks, contents):
+        parts = [f"Document: {file_name}"]
+        if getattr(chunk, "section_title", None):
+            parts.append(f"Section: {chunk.section_title}")
+        if getattr(chunk, "page_start", None):
+            page_end = getattr(chunk, "page_end", None)
+            if page_end and page_end != chunk.page_start:
+                parts.append(f"Pages: {chunk.page_start}\u2013{page_end}")
+            else:
+                parts.append(f"Page: {chunk.page_start}")
+        header = "[" + " | ".join(parts) + "]\n"
+        enriched.append(header + content)
+    return enriched
+
+
 def _batch_embed_chunks(
     text_adapter,
     db_chunks: list,
     contents: list[str],
+    embed_texts: list[str] | None = None,
 ) -> None:
     """
     Batch-embed a list of DocumentChunk ORM objects in a single model call.
@@ -176,13 +218,18 @@ def _batch_embed_chunks(
     - GPU / SIMD parallelism used across the whole batch
     - No repeated Python<->C++ round-trips for the embedding model
 
+    embed_texts: optional enriched texts to embed (e.g. with contextual
+    headers prepended). If None, contents are embedded as-is.
+    The stored chunk.content is always the clean original text.
+
     Updates each db_chunk.embedding in-place; SQLAlchemy dirty-tracking
     picks up the change automatically before the next flush().
     """
     if text_adapter is None or not db_chunks:
         return
+    texts_to_embed = embed_texts if embed_texts is not None else contents
     try:
-        embeddings = text_adapter.embed_batch(contents)
+        embeddings = text_adapter.embed_batch(texts_to_embed)
         for chunk, emb in zip(db_chunks, embeddings):
             chunk.embedding = emb
         logger.debug("Batch-embedded %d chunks", len(db_chunks))
@@ -285,8 +332,11 @@ async def _ingest_pdf(
             page_db_chunks.append(summary_chunk)
             page_contents.append(summary_text)
 
-        # Batch-embed all text chunks for this page in a single model call
-        _batch_embed_chunks(text_adapter, page_db_chunks, page_contents)
+        # Batch-embed with contextual headers — chunk.content stays clean for display
+        embed_texts = _build_contextual_embed_texts(
+            file_row.file_name, page_db_chunks, page_contents
+        )
+        _batch_embed_chunks(text_adapter, page_db_chunks, page_contents, embed_texts=embed_texts)
 
         # Inline images from this page (embedding is per-image, not batched here)
         for img_bytes in page.image_bytes:
@@ -345,7 +395,8 @@ async def _ingest_docx(
         db_chunks.append(db_chunk)
         contents.append(chunk.content)
 
-    _batch_embed_chunks(text_adapter, db_chunks, contents)
+    embed_texts = _build_contextual_embed_texts(file_row.file_name, db_chunks, contents)
+    _batch_embed_chunks(text_adapter, db_chunks, contents, embed_texts=embed_texts)
 
     for idx, img_bytes in enumerate(result.inline_image_bytes):
         img_key = f"extracted/{file_row.id}/inline_{idx}.jpg"

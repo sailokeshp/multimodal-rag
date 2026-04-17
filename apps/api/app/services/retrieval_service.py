@@ -5,9 +5,10 @@ Query flow:
   1. Classify query type (heuristic)
   2. Embed query (text + image-space) in thread executor (CPU-bound)
   3. Parallel: text vector search + image vector search + PG full-text
-  4. Merge and rerank with query-type-aware weights
-  5. Apply score threshold
-  6. Return top-k results + query type label
+  4. RRF merge — rank-position fusion (replaces raw-score weighted average)
+  5. Cross-encoder rerank (stage 2 precision)
+  6. Document diversity filter — max N results per source file
+  7. Return top-k results + query type label
 """
 from __future__ import annotations
 
@@ -29,10 +30,9 @@ from app.services.storage_service import StorageService
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Scoring weights for the default "hybrid" mode.
-W_TEXT = 0.45
-W_IMAGE = 0.30
-W_LEXICAL = 0.15
+# RRF k-constant: dampens the rank-1 advantage.
+# k=60 is the value from the original Cormack & Clarke paper and is widely used.
+_RRF_K = 60
 
 # Shared thread-pool for CPU-bound embedding calls.
 _executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="embed")
@@ -81,8 +81,10 @@ class RetrievalService:
         image_hits  = await self._vector_search_image(image_embedding, fetch_k_image, filters)
         lexical_hits = await self._lexical_search(query, top_k_text, filters)
 
-        # Stage 1: merge by hybrid weighted score (keeps top_k_final * multiplier)
-        merged = self._merge_and_rerank(
+        # Stage 1: RRF merge — combines three retrieval channels by rank position,
+        # not raw score.  Rank position is meaningful across heterogeneous channels
+        # (cosine similarity, image cosine, BM25) where raw scores are NOT comparable.
+        merged = self._merge_rrf(
             text_hits, image_hits, lexical_hits,
             top_k_final * fetch_multiplier,   # keep a wider pool for the reranker
             query_type,
@@ -98,6 +100,10 @@ class RetrievalService:
             )
         else:
             merged = merged[:top_k_final]
+
+        # Stage 3: document diversity filter — cap results per source file
+        if settings.diversity_max_per_file > 0:
+            merged = self._apply_diversity_filter(merged, settings.diversity_max_per_file)
 
         latency_ms = int((time.monotonic() - t0) * 1000)
         self.db.add(
@@ -366,48 +372,95 @@ class RetrievalService:
 
     # ── Merge and rerank ──────────────────────────────────────────────────────
 
-    def _merge_and_rerank(
+    def _merge_rrf(
         self,
         text_hits: list,
         image_hits: list,
         lexical_hits: list,
-        top_k_final: int,
+        top_k: int,
         query_type: str,
     ) -> list:
-        # Adjust weights by query type.
-        w_text = W_TEXT
-        w_image = W_IMAGE
-        if query_type == "image":
-            w_text, w_image = 0.15, 0.60
-        elif query_type in ("summary", "compare"):
-            w_text, w_image = 0.60, 0.10
+        """
+        Reciprocal Rank Fusion (RRF) across three retrieval channels.
 
-        scored: dict[str, dict] = {}
+        Formula:  score(d) = Σ_channel  w_channel / (k + rank_in_channel)
+
+        Why RRF beats weighted raw-score averaging:
+        - Cosine similarity, image cosine, and BM25 scores live on different scales.
+          Averaging them is mathematically unsound — a 0.9 text score averaged
+          with a 0.3 image score buries the strong text signal.
+        - Rank *position* is meaningful and comparable across all channels:
+          rank-1 in any channel means "best match in that channel."
+        - k=60 dampens the rank-1 advantage — proven optimal in the original
+          Cormack & Clarke (2009) paper and confirmed across many IR benchmarks.
+
+        Reference: Cormack, G.V., Clarke, C.L.A., Buettcher, S. (2009).
+        "Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods."
+        """
+        # Channel weights vary by query intent
+        if query_type == "image":
+            w_text, w_image, w_lex = 0.15, 0.60, 0.25
+        elif query_type in ("summary", "compare"):
+            w_text, w_image, w_lex = 0.60, 0.10, 0.30
+        else:  # hybrid (default)
+            w_text, w_image, w_lex = 0.45, 0.30, 0.25
+
+        rrf_scores: dict[str, dict] = {}
 
         def _key(item: Any) -> str:
             if hasattr(item, "imageId"):
                 return f"img:{item.imageId}"
-            # For text chunks, key on fileId + snippet prefix for dedup.
             return f"txt:{item.fileId}:{getattr(item, 'snippet', '')[:50]}"
 
-        def _upsert(item: Any, weight: float) -> None:
-            k = _key(item)
-            if k not in scored:
-                scored[k] = {"item": item, "final_score": 0.0}
-            scored[k]["final_score"] += weight * item.score
+        def _apply_channel(hits: list, weight: float) -> None:
+            for rank, hit in enumerate(hits, start=1):
+                k = _key(hit)
+                if k not in rrf_scores:
+                    rrf_scores[k] = {"item": hit, "score": 0.0}
+                rrf_scores[k]["score"] += weight / (_RRF_K + rank)
 
-        for hit in text_hits:
-            _upsert(hit, w_text)
-        for hit in image_hits:
-            _upsert(hit, w_image)
-        for hit in lexical_hits:
-            _upsert(hit, W_LEXICAL)
+        _apply_channel(text_hits, w_text)
+        _apply_channel(image_hits, w_image)
+        _apply_channel(lexical_hits, w_lex)
 
-        ranked = sorted(scored.values(), key=lambda x: x["final_score"], reverse=True)
+        ranked = sorted(rrf_scores.values(), key=lambda x: x["score"], reverse=True)
+
+        # Normalise to [0, 1] so score display remains intuitive downstream
+        if ranked:
+            max_score = ranked[0]["score"]
+            if max_score > 0:
+                for entry in ranked:
+                    entry["score"] /= max_score
 
         results = []
-        for entry in ranked[:top_k_final]:
+        for entry in ranked[:top_k]:
             item = entry["item"]
-            item.score = round(entry["final_score"], 4)
+            item.score = round(entry["score"], 4)
             results.append(item)
         return results
+
+    def _apply_diversity_filter(self, results: list, max_per_file: int) -> list:
+        """
+        Limit results to max_per_file entries per source document.
+
+        Without this, a large document with many similar chunks can fill every
+        slot in the top-K results — meaning the user never sees relevant content
+        from other uploaded documents.  Critical for multi-document RAG.
+
+        Applied after reranking so the cross-encoder's quality signal determines
+        *which* chunks from each file are kept, not which files are kept.
+        """
+        seen: dict[str, int] = {}
+        filtered = []
+        for item in results:
+            file_id = item.fileId
+            count = seen.get(file_id, 0)
+            if count < max_per_file:
+                filtered.append(item)
+                seen[file_id] = count + 1
+        if len(filtered) < len(results):
+            logger.debug(
+                "Diversity filter: %d → %d results (max %d per file)",
+                len(results), len(filtered), max_per_file,
+            )
+        return filtered
