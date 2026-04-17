@@ -201,6 +201,11 @@ class RetrievalService:
                 )
                 .join(File, File.id == DocumentChunk.file_id)
                 .where(DocumentChunk.embedding.isnot(None))
+                # Exclude image_caption chunks — they are already surfaced as
+                # ImageResult via SigLIP2 vector search.  Including them in
+                # text search creates duplicate results and false positives
+                # when caption words happen to match unrelated queries.
+                .where(DocumentChunk.chunk_type != "image_caption")
                 .order_by(DocumentChunk.embedding.cosine_distance(embedding))
                 .limit(top_k)
             )
@@ -309,6 +314,7 @@ class RetrievalService:
                         "@@ plainto_tsquery('english', :q)"
                     )
                 )
+                .where(DocumentChunk.chunk_type != "image_caption")
                 .order_by(text("score DESC"))
                 .limit(top_k)
                 .params(q=query)
