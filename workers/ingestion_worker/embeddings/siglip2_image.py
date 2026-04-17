@@ -42,11 +42,20 @@ class SigLIP2ImageAdapter:
             pixel_values = pixel_values.to(device)
 
             with torch.no_grad():
-                features = model.get_image_features(pixel_values=pixel_values)
+                out = model.get_image_features(pixel_values=pixel_values)
 
-            # squeeze batch dim then flatten — handles [1152], [1,1152], [1,1,1152]
-            vec = features.squeeze().cpu().float().tolist()
-            if isinstance(vec[0], (list, tuple)):
+            # get_image_features may return a raw tensor or a model output object
+            if isinstance(out, torch.Tensor):
+                feat = out
+            elif hasattr(out, 'image_embeds') and out.image_embeds is not None:
+                feat = out.image_embeds
+            elif hasattr(out, 'pooler_output') and out.pooler_output is not None:
+                feat = out.pooler_output
+            else:
+                feat = out[0]  # last resort — first element
+
+            vec = feat.squeeze().cpu().float().tolist()
+            if vec and isinstance(vec[0], (list, tuple)):
                 vec = vec[0]
             return _normalize(vec)
 

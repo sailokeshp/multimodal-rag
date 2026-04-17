@@ -44,10 +44,19 @@ class SigLIP2TextAdapter:
             inputs = {k: v.to(device) for k, v in inputs.items()}
 
             with torch.no_grad():
-                features = model.get_text_features(**inputs)
+                out = model.get_text_features(**inputs)
 
-            vec = features.squeeze().cpu().float().tolist()
-            if isinstance(vec[0], (list, tuple)):
+            if isinstance(out, torch.Tensor):
+                feat = out
+            elif hasattr(out, 'text_embeds') and out.text_embeds is not None:
+                feat = out.text_embeds
+            elif hasattr(out, 'pooler_output') and out.pooler_output is not None:
+                feat = out.pooler_output
+            else:
+                feat = out[0]
+
+            vec = feat.squeeze().cpu().float().tolist()
+            if vec and isinstance(vec[0], (list, tuple)):
                 vec = vec[0]
             return _normalize(vec)
 
