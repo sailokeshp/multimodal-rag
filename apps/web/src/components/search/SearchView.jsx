@@ -17,25 +17,41 @@ function ScoreBadge({ score }) {
 function GridResultCard({ result, rank }) {
   const isImg = result.resultType === 'image'
   const thumb = thumbnailUrl(result.thumbnailUrl)
+  const ext = result.fileName?.split('.').pop()?.toLowerCase()
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 hover:shadow-md transition-shadow overflow-hidden flex flex-col">
-      <div className="relative bg-gray-50 h-40 flex items-center justify-center overflow-hidden">
+    <div className="bg-white rounded-xl border border-gray-200 hover:border-blue-300 hover:shadow-md transition-all overflow-hidden flex flex-col">
+      {/* Thumbnail area — taller for image results to match asset cards */}
+      <div className={`relative bg-gray-50 flex items-center justify-center overflow-hidden ${isImg ? 'h-44' : 'h-28'}`}>
         {thumb ? (
-          <img src={thumb} alt={result.fileName} className="w-full h-full object-cover"
-            onError={e => { e.target.style.display = 'none' }} />
+          <>
+            <img src={thumb} alt={result.fileName} className="w-full h-full object-cover"
+              onError={e => { e.target.style.display = 'none'; e.target.nextSibling.style.display = 'flex' }} />
+            <div className="absolute inset-0 items-center justify-center text-5xl hidden">
+              {isImg ? '🖼' : '📄'}
+            </div>
+          </>
         ) : (
-          <span className="text-4xl">{isImg ? '🖼' : '📄'}</span>
+          <span className="text-5xl">{isImg ? '🖼' : '📄'}</span>
         )}
-        <span className="absolute top-2 left-2 bg-black/50 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-mono">
-          {rank}
-        </span>
-        <div className="absolute top-2 right-2"><ScoreBadge score={result.score} /></div>
+        {/* File type badge (top-left) */}
+        {ext && (
+          <span className="absolute top-2 left-2 bg-black/50 text-white text-xs px-2 py-0.5 rounded-full uppercase font-mono">
+            {ext}
+          </span>
+        )}
+        {/* Rank + score (top-right) */}
+        <div className="absolute top-2 right-2 flex items-center gap-1">
+          <span className="bg-black/40 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-mono">
+            {rank}
+          </span>
+          <ScoreBadge score={result.score} />
+        </div>
       </div>
-      <div className="p-3">
-        <p className="text-xs font-medium text-gray-900 truncate mb-1">{result.fileName}</p>
+      <div className="p-3 flex flex-col gap-1">
+        <p className="text-xs font-medium text-gray-900 truncate" title={result.fileName}>{result.fileName}</p>
         {isImg
-          ? result.caption && <p className="text-xs text-gray-500 line-clamp-2">{result.caption}</p>
+          ? result.caption && <p className="text-xs text-gray-500 line-clamp-2 leading-relaxed">{result.caption}</p>
           : <p className="text-xs text-gray-600 line-clamp-3 leading-relaxed">{result.snippet}</p>
         }
       </div>
@@ -53,12 +69,14 @@ function ListResultRow({ result, rank }) {
     : null
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 p-3 hover:shadow-sm transition-shadow flex gap-3">
+    <div className="bg-white rounded-xl border border-gray-200 p-3 hover:border-blue-300 hover:shadow-sm transition-all flex gap-3">
       <span className="text-xs text-gray-400 font-mono w-4 flex-shrink-0 mt-0.5">{rank}</span>
-      <div className="w-12 h-12 rounded-lg overflow-hidden bg-gray-100 flex-shrink-0 flex items-center justify-center">
+      {/* Thumbnail: bigger for images, compact for documents */}
+      <div className={`rounded-lg overflow-hidden bg-gray-100 flex-shrink-0 flex items-center justify-center ${isImg ? 'w-20 h-20' : 'w-10 h-10'}`}>
         {thumb
-          ? <img src={thumb} alt="" className="w-full h-full object-cover" onError={e => { e.target.style.display = 'none' }} />
-          : <span className="text-2xl">{isImg ? '🖼' : '📄'}</span>
+          ? <img src={thumb} alt="" className="w-full h-full object-cover"
+              onError={e => { e.target.style.display = 'none' }} />
+          : <span className={isImg ? 'text-3xl' : 'text-xl'}>{isImg ? '🖼' : '📄'}</span>
         }
       </div>
       <div className="flex-1 min-w-0">
@@ -68,7 +86,7 @@ function ListResultRow({ result, rank }) {
           <ScoreBadge score={result.score} />
         </div>
         {isImg
-          ? result.caption && <p className="text-xs text-gray-600 line-clamp-2">{result.caption}</p>
+          ? result.caption && <p className="text-xs text-gray-600 line-clamp-2 leading-relaxed">{result.caption}</p>
           : <p className="text-sm text-gray-700 line-clamp-2 leading-relaxed">{result.snippet}</p>
         }
       </div>
