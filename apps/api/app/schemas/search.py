@@ -30,6 +30,7 @@ class ImageResult(BaseModel):
     fileName: str
     imageId: str
     thumbnailUrl: str | None = None
+    caption: str | None = None
     score: float
 
 

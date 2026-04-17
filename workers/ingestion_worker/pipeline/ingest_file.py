@@ -328,9 +328,10 @@ async def _ingest_docx(
 async def _ingest_image(
     db, file_row, file_bytes: bytes, storage, text_adapter, image_adapter
 ) -> None:
-    from app.db.models import Image
+    from app.db.models import DocumentChunk, Image
     from workers.ingestion_worker.parsers.image_parser import parse_image
     from workers.ingestion_worker.ocr.tesseract_ocr import run_ocr
+    from workers.ingestion_worker.embeddings.image_caption import generate_caption
 
     settings = _get_settings()
     parsed = parse_image(file_bytes)
@@ -349,6 +350,10 @@ async def _ingest_image(
         except Exception as exc:
             logger.warning("OCR failed for uploaded image: %s", exc)
 
+    # Generate AI caption via Groq Vision — closes the RAG loop so the LLM
+    # gets a textual description of the image as grounded context.
+    caption = generate_caption(file_bytes, settings.groq_api_key)
+
     db.add(Image(
         id=uuid.uuid4(),
         file_id=file_row.id,
@@ -358,8 +363,22 @@ async def _ingest_image(
         width=parsed.width,
         height=parsed.height,
         ocr_text=ocr_text,
+        caption_text=caption,
         embedding=_safe_embed_image(image_adapter, file_bytes),
     ))
+
+    # Store caption as a searchable text chunk so text-vector search also
+    # finds this image and the LLM receives it as grounded context.
+    if caption:
+        db.add(DocumentChunk(
+            id=uuid.uuid4(),
+            file_id=file_row.id,
+            chunk_type="image_caption",
+            chunk_index=0,
+            content=caption,
+            embedding=_safe_embed_text(text_adapter, caption),
+        ))
+        logger.info("Caption stored as text chunk for file_id=%s", file_row.id)
 
     await db.flush()
     logger.info("Image ingested: file_id=%s size=%dx%d", file_row.id, parsed.width, parsed.height)

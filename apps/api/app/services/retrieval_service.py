@@ -262,6 +262,7 @@ class RetrievalService:
                         fileName=file_name,
                         imageId=str(image.id),
                         thumbnailUrl=image.thumbnail_s3_key,
+                        caption=image.caption_text,
                         score=round(score_f, 4),
                     )
                 )

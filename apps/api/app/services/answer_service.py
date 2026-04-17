@@ -85,7 +85,13 @@ class AnswerService:
 
             elif hasattr(r, "imageId"):
                 source_label = f"{r.fileName} (image)"
-                blocks.append(f"[Image source: {source_label}]")
+                caption = getattr(r, "caption", None)
+                if caption:
+                    blocks.append(
+                        f"[Image source: {source_label}]\nVisual description: {caption}"
+                    )
+                else:
+                    blocks.append(f"[Image source: {source_label}]")
                 if source_label not in citations:
                     citations.append(source_label)
 
