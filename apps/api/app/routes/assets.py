@@ -96,12 +96,14 @@ def _embedding_preview(vec: Any, model: str, dim: int) -> EmbeddingPreview | Non
     if vec is None:
         return None
     try:
-        vals = list(vec)[:8]
-        norm = math.sqrt(sum(v * v for v in vals))
+        all_vals = list(vec)
+        sample = all_vals[:8]
+        # compute norm over the full vector, not just the 8-value sample
+        norm = math.sqrt(sum(v * v for v in all_vals))
         return EmbeddingPreview(
             model=model,
             dim=dim,
-            sample=[round(v, 6) for v in vals],
+            sample=[round(v, 6) for v in sample],
             norm=round(norm, 4),
         )
     except Exception:

@@ -106,8 +106,26 @@ class RetrievalService:
         """
         q = query.lower()
         image_kw = {
+            # Explicit visual intent
             "image", "photo", "picture", "chart", "diagram", "graph",
             "figure", "logo", "illustration", "screenshot", "visual",
+            "thumbnail", "icon", "banner", "poster",
+            # People / body
+            "woman", "women", "man", "men", "person", "people",
+            "girl", "boy", "model", "athlete", "face", "body",
+            # Clothing / fashion / appearance
+            "wearing", "dressed", "outfit", "clothes", "clothing",
+            "shirt", "shorts", "pants", "dress", "jacket", "coat",
+            "shoe", "shoes", "hat", "bag", "fashion", "style", "sport",
+            "sportswear", "uniform", "jersey", "swimwear", "suit",
+            # Colors and visual attributes
+            "red", "blue", "green", "yellow", "black", "white", "pink",
+            "color", "colour", "bright", "dark", "pattern", "stripe",
+            # Scene / environment
+            "scene", "outdoor", "indoor", "background", "landscape",
+            "sky", "building", "room", "studio", "nature",
+            # Products
+            "product", "item", "display", "show", "looks like",
         }
         summary_kw = {
             "summarize", "summary", "overview", "describe all",
@@ -154,7 +172,9 @@ class RetrievalService:
             return False
         if settings.image_query_embed_policy == "always":
             return True
-        return query_type == "image"
+        # "image" queries always use SigLIP2; "hybrid" also does so image-only
+        # assets (no text chunks) are still retrievable.
+        return query_type in ("image", "hybrid")
 
     # ── Vector searches ───────────────────────────────────────────────────────
 
@@ -229,9 +249,12 @@ class RetrievalService:
 
             rows = (await self.db.execute(q)).all()
             results = []
+            # SigLIP2 cross-modal scores are typically lower than same-modal
+            # text scores, so apply a more lenient threshold for image results.
+            image_threshold = min(settings.retrieval_score_threshold, 0.20)
             for image, file_name, score in rows:
                 score_f = float(score)
-                if score_f < settings.retrieval_score_threshold:
+                if score_f < image_threshold:
                     continue
                 results.append(
                     ImageResult(
