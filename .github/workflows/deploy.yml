@@ -136,7 +136,7 @@ jobs:
           IMAGE_EMBED_MODEL_NAME=google/siglip2-so400m-patch16-384
           IMAGE_EMBED_DIM=1152
           ENABLE_IMAGE_EMBEDDINGS=true
-          IMAGE_QUERY_EMBED_POLICY=image_only
+          IMAGE_QUERY_EMBED_POLICY=always
           GEN_MODEL_BACKEND=groq
           GEN_MODEL_NAME=llama-3.1-8b-instant
           GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}

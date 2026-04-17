@@ -105,6 +105,9 @@ class RetrievalService:
         Gemma-based classifier can replace this in Phase 3.
         """
         q = query.lower()
+        # Use word-level matching to avoid substring false positives
+        # e.g. "men" must not match inside "documents", "red" inside "shredded".
+        words = set(q.split())
         image_kw = {
             # Explicit visual intent
             "image", "photo", "picture", "chart", "diagram", "graph",
@@ -112,20 +115,19 @@ class RetrievalService:
             "thumbnail", "icon", "banner", "poster",
             # People / body
             "woman", "women", "man", "men", "person", "people",
-            "girl", "boy", "model", "athlete", "face", "body",
+            "girl", "boy", "model", "athlete", "face",
             # Clothing / fashion / appearance
             "wearing", "dressed", "outfit", "clothes", "clothing",
             "shirt", "shorts", "pants", "dress", "jacket", "coat",
-            "shoe", "shoes", "hat", "bag", "fashion", "style", "sport",
-            "sportswear", "uniform", "jersey", "swimwear", "suit",
-            # Colors and visual attributes
-            "red", "blue", "green", "yellow", "black", "white", "pink",
-            "color", "colour", "bright", "dark", "pattern", "stripe",
+            "shoes", "hat", "bag", "fashion", "sportswear",
+            "uniform", "jersey", "swimwear", "suit",
+            # Colors (only as standalone words)
+            "color", "colour", "pattern", "stripe",
             # Scene / environment
             "scene", "outdoor", "indoor", "background", "landscape",
-            "sky", "building", "room", "studio", "nature",
-            # Products
-            "product", "item", "display", "show", "looks like",
+            "sky", "studio", "nature",
+            # Products / visual action
+            "product", "display",
         }
         summary_kw = {
             "summarize", "summary", "overview", "describe all",
@@ -133,7 +135,10 @@ class RetrievalService:
         }
         compare_kw = {"compare", "difference", "vs", "versus", "contrast", "which is"}
 
-        if any(k in q for k in image_kw):
+        # word-level check for single-word keywords; substring for multi-word phrases
+        single_word_image = {k for k in image_kw if " " not in k}
+        multi_word_image = {k for k in image_kw if " " in k}
+        if (words & single_word_image) or any(k in q for k in multi_word_image):
             return "image"
         if any(k in q for k in summary_kw):
             return "summary"
@@ -172,9 +177,7 @@ class RetrievalService:
             return False
         if settings.image_query_embed_policy == "always":
             return True
-        # "image" queries always use SigLIP2; "hybrid" also does so image-only
-        # assets (no text chunks) are still retrievable.
-        return query_type in ("image", "hybrid")
+        return query_type == "image"
 
     # ── Vector searches ───────────────────────────────────────────────────────
 
