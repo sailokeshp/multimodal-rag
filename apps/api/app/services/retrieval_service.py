@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -264,7 +265,11 @@ class RetrievalService:
             storage = StorageService()
             for image, file_name, score in rows:
                 score_f = float(score)
-                if score_f < image_threshold:
+                # NaN/Inf arise when the stored embedding is a zero vector
+                # (pgvector: cosine_distance(zero, v) = undefined).
+                # NaN comparisons always return False in Python so they would
+                # bypass the threshold check — guard against that explicitly.
+                if not math.isfinite(score_f) or score_f < image_threshold:
                     continue
                 thumb_url = None
                 if image.thumbnail_s3_key:

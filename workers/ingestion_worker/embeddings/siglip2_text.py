@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class SigLIP2TextAdapter:
-    def embed_text(self, text: str) -> list[float]:
+    def embed_text(self, text: str) -> list[float] | None:
         """
         Embed a text string using the SigLIP2 text encoder.
         Returns an L2-normalised 1152-d vector.
@@ -62,7 +62,10 @@ class SigLIP2TextAdapter:
 
         except Exception as exc:
             logger.error("SigLIP2 text embed failed: %s", exc, exc_info=True)
-            return [0.0] * EMBED_DIM
+            # Return None (not a zero vector) so the caller can detect failure
+            # and skip image vector search entirely, rather than passing a zero
+            # vector to pgvector which produces NaN cosine distances.
+            return None
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Batch encode — processes one at a time for simplicity."""
