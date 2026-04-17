@@ -3,7 +3,7 @@ import { useState } from 'react'
 export default function SearchForm({ onSearch, loading }) {
   const [query, setQuery] = useState('')
   const [topK, setTopK] = useState(8)
-  const [includeAnswer, setIncludeAnswer] = useState(false)
+  const [includeAnswer, setIncludeAnswer] = useState(true)
 
   const submit = e => {
     e.preventDefault()

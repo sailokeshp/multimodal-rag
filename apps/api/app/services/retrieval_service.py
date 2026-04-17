@@ -55,6 +55,12 @@ class RetrievalService:
 
         query_type = self._classify_query(query)
 
+        # When reranking is enabled, over-fetch candidates so the cross-encoder
+        # has a richer pool to re-score. The multiplier is configurable.
+        fetch_multiplier = settings.rerank_fetch_multiplier if settings.enable_reranking else 1
+        fetch_k_text  = top_k_text  * fetch_multiplier
+        fetch_k_image = top_k_image * fetch_multiplier
+
         image_embedding_future = loop.create_future()
         image_embedding_future.set_result(None)
         if self._should_embed_image_query(query_type):
@@ -71,13 +77,27 @@ class RetrievalService:
         # SQLAlchemy AsyncSession does not permit concurrent execute() calls on
         # the same session while provisioning/using a connection, so keep the
         # DB-bound retrieval passes sequential for stability.
-        text_hits = await self._vector_search_text(text_embedding, top_k_text, filters)
-        image_hits = await self._vector_search_image(image_embedding, top_k_image, filters)
+        text_hits   = await self._vector_search_text(text_embedding, fetch_k_text, filters)
+        image_hits  = await self._vector_search_image(image_embedding, fetch_k_image, filters)
         lexical_hits = await self._lexical_search(query, top_k_text, filters)
 
+        # Stage 1: merge by hybrid weighted score (keeps top_k_final * multiplier)
         merged = self._merge_and_rerank(
-            text_hits, image_hits, lexical_hits, top_k_final, query_type
+            text_hits, image_hits, lexical_hits,
+            top_k_final * fetch_multiplier,   # keep a wider pool for the reranker
+            query_type,
         )
+
+        # Stage 2: cross-encoder rerank → final top_k_final
+        if settings.enable_reranking and merged:
+            from app.services.rerank_service import RerankService
+            reranker = RerankService()
+            merged = await loop.run_in_executor(
+                _executor,
+                lambda: reranker.rerank(query, merged, top_k_final),
+            )
+        else:
+            merged = merged[:top_k_final]
 
         latency_ms = int((time.monotonic() - t0) * 1000)
         self.db.add(
@@ -89,12 +109,13 @@ class RetrievalService:
             )
         )
         logger.info(
-            "Search done: type=%s hits=(text=%d img=%d lex=%d) final=%d latency=%dms",
+            "Search done: type=%s hits=(text=%d img=%d lex=%d) "
+            "merged=%d final=%d reranked=%s latency=%dms",
             query_type,
-            len(text_hits),
-            len(image_hits),
-            len(lexical_hits),
+            len(text_hits), len(image_hits), len(lexical_hits),
+            len(text_hits) + len(image_hits) + len(lexical_hits),
             len(merged),
+            settings.enable_reranking,
             latency_ms,
         )
         return merged, query_type

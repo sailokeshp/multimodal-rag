@@ -163,6 +163,33 @@ def _safe_embed_image(image_adapter, image_bytes: bytes) -> list[float] | None:
         return None
 
 
+def _batch_embed_chunks(
+    text_adapter,
+    db_chunks: list,
+    contents: list[str],
+) -> None:
+    """
+    Batch-embed a list of DocumentChunk ORM objects in a single model call.
+
+    Batching is ~5-10x faster than per-chunk calls because:
+    - Model overhead (tokenisation, device transfer) amortised once
+    - GPU / SIMD parallelism used across the whole batch
+    - No repeated Python<->C++ round-trips for the embedding model
+
+    Updates each db_chunk.embedding in-place; SQLAlchemy dirty-tracking
+    picks up the change automatically before the next flush().
+    """
+    if text_adapter is None or not db_chunks:
+        return
+    try:
+        embeddings = text_adapter.embed_batch(contents)
+        for chunk, emb in zip(db_chunks, embeddings):
+            chunk.embedding = emb
+        logger.debug("Batch-embedded %d chunks", len(db_chunks))
+    except Exception as exc:
+        logger.warning("Batch embedding failed, chunks will have no embedding: %s", exc)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Per-type ingestors
 # ─────────────────────────────────────────────────────────────────────────────
@@ -186,6 +213,29 @@ async def _ingest_pdf(
     for page in result.pages:
         page_text = page.text
 
+        # Collect all text chunks for this page so we can batch-embed them
+        page_db_chunks: list = []
+        page_contents: list[str] = []
+
+        def _add_chunk(chunk) -> None:
+            nonlocal chunk_index
+            db_chunk = DocumentChunk(
+                id=uuid.uuid4(),
+                file_id=file_row.id,
+                chunk_type=chunk.chunk_type,
+                page_start=chunk.page_start,
+                page_end=chunk.page_end,
+                section_title=chunk.section_title,
+                chunk_index=chunk.chunk_index,
+                content=chunk.content,
+                token_count=chunk.token_count,
+                embedding=None,  # filled by batch embed below
+            )
+            db.add(db_chunk)
+            page_db_chunks.append(db_chunk)
+            page_contents.append(chunk.content)
+            chunk_index += 1
+
         # OCR scanned or image-heavy pages
         if page.needs_ocr and settings.use_local_ocr:
             try:
@@ -204,19 +254,7 @@ async def _ingest_pdf(
                         page_end=page.page_number,
                         start_index=chunk_index,
                     ):
-                        chunk_index += 1
-                        db.add(DocumentChunk(
-                            id=uuid.uuid4(),
-                            file_id=file_row.id,
-                            chunk_type=chunk.chunk_type,
-                            page_start=chunk.page_start,
-                            page_end=chunk.page_end,
-                            section_title=chunk.section_title,
-                            chunk_index=chunk.chunk_index,
-                            content=chunk.content,
-                            token_count=chunk.token_count,
-                            embedding=_safe_embed_text(text_adapter, chunk.content),
-                        ))
+                        _add_chunk(chunk)
             except Exception as exc:
                 logger.warning("OCR failed for page %d: %s", page.page_number, exc)
 
@@ -229,34 +267,28 @@ async def _ingest_pdf(
                 page_end=page.page_number,
                 start_index=chunk_index,
             ):
-                chunk_index += 1
-                db.add(DocumentChunk(
-                    id=uuid.uuid4(),
-                    file_id=file_row.id,
-                    chunk_type=chunk.chunk_type,
-                    page_start=chunk.page_start,
-                    page_end=chunk.page_end,
-                    section_title=chunk.section_title,
-                    chunk_index=chunk.chunk_index,
-                    content=chunk.content,
-                    token_count=chunk.token_count,
-                    embedding=_safe_embed_text(text_adapter, chunk.content),
-                ))
+                _add_chunk(chunk)
 
         # Page summary
         summary_text = summarize_page(page_text, page.page_number)
         if summary_text:
-            db.add(DocumentChunk(
+            summary_chunk = DocumentChunk(
                 id=uuid.uuid4(),
                 file_id=file_row.id,
                 chunk_type="page_summary",
                 page_start=page.page_number,
                 page_end=page.page_number,
                 content=summary_text,
-                embedding=_safe_embed_text(text_adapter, summary_text),
-            ))
+                embedding=None,
+            )
+            db.add(summary_chunk)
+            page_db_chunks.append(summary_chunk)
+            page_contents.append(summary_text)
 
-        # Inline images from this page
+        # Batch-embed all text chunks for this page in a single model call
+        _batch_embed_chunks(text_adapter, page_db_chunks, page_contents)
+
+        # Inline images from this page (embedding is per-image, not batched here)
         for img_bytes in page.image_bytes:
             img_key = (
                 f"extracted/{file_row.id}/page{page.page_number}"
@@ -277,7 +309,9 @@ async def _ingest_pdf(
 
         # Flush per page to avoid one giant transaction
         await db.flush()
-        logger.debug("PDF page %d ingested (chunks=%d)", page.page_number, chunk_index)
+        logger.debug(
+            "PDF page %d ingested (chunks=%d)", page.page_number, chunk_index
+        )
 
 
 async def _ingest_docx(
@@ -290,10 +324,14 @@ async def _ingest_docx(
     result = parse_docx(file_bytes)
     full_text = "\n\n".join(b.content for b in result.blocks)
 
+    # Collect all chunks, then batch-embed in one shot
+    db_chunks: list = []
+    contents: list[str] = []
     chunk_index = 0
+
     for chunk in chunk_text(full_text, chunk_type="text_chunk", start_index=chunk_index):
         chunk_index += 1
-        db.add(DocumentChunk(
+        db_chunk = DocumentChunk(
             id=uuid.uuid4(),
             file_id=file_row.id,
             chunk_type=chunk.chunk_type,
@@ -301,8 +339,13 @@ async def _ingest_docx(
             chunk_index=chunk.chunk_index,
             content=chunk.content,
             token_count=chunk.token_count,
-            embedding=_safe_embed_text(text_adapter, chunk.content),
-        ))
+            embedding=None,  # filled by batch embed below
+        )
+        db.add(db_chunk)
+        db_chunks.append(db_chunk)
+        contents.append(chunk.content)
+
+    _batch_embed_chunks(text_adapter, db_chunks, contents)
 
     for idx, img_bytes in enumerate(result.inline_image_bytes):
         img_key = f"extracted/{file_row.id}/inline_{idx}.jpg"

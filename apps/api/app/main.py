@@ -21,13 +21,55 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create pgvector extension and tables on startup (idempotent).
+    # Create pgvector extension, tables, and performance indexes on startup.
+    # All statements are idempotent (IF NOT EXISTS) — safe to run every time.
     async with engine.begin() as conn:
         from sqlalchemy import text
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
         await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables ensured. App starting (env=%s).", settings.app_env)
+
+        # ── HNSW vector indexes ───────────────────────────────────────────────
+        # HNSW (Hierarchical Navigable Small World) gives O(log n) ANN search
+        # vs O(n) for the default sequential scan. At 10k+ chunks the difference
+        # is 10-100x query speedup with <5% recall loss.
+        #
+        # m=16: connections per node (standard value, good recall/speed balance)
+        # ef_construction=64: build quality; higher = better recall, slower build
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_doc_chunks_hnsw
+            ON document_chunks
+            USING hnsw (embedding vector_cosine_ops)
+            WITH (m = 16, ef_construction = 64)
+        """))
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_images_hnsw
+            ON images
+            USING hnsw (embedding vector_cosine_ops)
+            WITH (m = 16, ef_construction = 64)
+        """))
+
+        # ── Standard BTree indexes for common filter columns ─────────────────
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_files_status ON files (status)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_file_type "
+            "ON document_chunks (chunk_type)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_chunks_file_id "
+            "ON document_chunks (file_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_images_file_id "
+            "ON images (file_id)"
+        ))
+
+    logger.info(
+        "Database tables and indexes ensured. App starting (env=%s).",
+        settings.app_env,
+    )
 
     os.makedirs(settings.local_storage_path, exist_ok=True)
 

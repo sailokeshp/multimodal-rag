@@ -1,7 +1,17 @@
 """
-Structure-aware text chunker.
-Splits first by heading/section, then by paragraph groups.
-Target chunk size: 400-800 tokens. Overlap: ~15%.
+Sentence-aware semantic text chunker.
+
+Industry-grade chunking strategy:
+  1. Split text into atomic units (sentences) using a hierarchy of separators
+  2. Group sentences into chunks respecting the token budget
+  3. Overlap at the sentence level — not character slice — so context is coherent
+  4. Skip micro-chunks (page numbers, OCR noise) below MIN_CHUNK_TOKENS
+  5. Preserve heading context in every chunk for better retrieval
+
+Why sentence-level chunking matters:
+  - Character-slice overlap frequently cuts mid-word or mid-sentence
+  - A retrieved chunk that starts "…ently, the revenue grew" confuses the LLM
+  - Sentence-boundary overlap keeps each chunk semantically self-contained
 """
 from __future__ import annotations
 
@@ -11,26 +21,47 @@ from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
-TARGET_TOKENS = 600
-OVERLAP_TOKENS = 90   # ~15%
-AVG_CHARS_PER_TOKEN = 4  # rough estimate for English text
+# ── Tuning constants ───────────────────────────────────────────────────────────
+TARGET_TOKENS     = 512   # target chunk size (not hard limit)
+MAX_TOKENS        = 768   # hard upper bound — prevents over-size context entries
+MIN_CHUNK_TOKENS  = 30    # discard chunks shorter than this (noise / page numbers)
+OVERLAP_SENTENCES = 2     # sentences to carry over for continuity
+AVG_CHARS_PER_TOKEN = 4   # English prose estimate; safe for technical docs
 
-TARGET_CHARS = TARGET_TOKENS * AVG_CHARS_PER_TOKEN
-OVERLAP_CHARS = OVERLAP_TOKENS * AVG_CHARS_PER_TOKEN
+TARGET_CHARS = TARGET_TOKENS * AVG_CHARS_PER_TOKEN   # 2048 chars
+MAX_CHARS    = MAX_TOKENS * AVG_CHARS_PER_TOKEN       # 3072 chars
+MIN_CHARS    = MIN_CHUNK_TOKENS * AVG_CHARS_PER_TOKEN # 120 chars
 
-HEADING_RE = re.compile(r"^(#{1,6}\s+.+|[A-Z][A-Z\s]{4,}:?)$", re.MULTILINE)
+# Detect headings: markdown (#), ALLCAPS lines, or numbered sections (1. / 1.1 /)
+HEADING_RE = re.compile(
+    r"^(?:"
+    r"#{1,6}\s+.+"                            # Markdown ## Heading
+    r"|[A-Z][A-Z\d\s,\-]{4,}:?"              # ALL CAPS LINE
+    r"|\d+(?:\.\d+)*[.)]\s+[A-Z].{3,}"       # 1. Introduction / 1.1 Background
+    r")$",
+    re.MULTILINE,
+)
+
+# Protect common abbreviations from being split as sentence endings
+_ABBR_PATTERN = re.compile(
+    r"\b(Mr|Mrs|Ms|Dr|Prof|Sr|Jr|vs|etc|al|e\.g|i\.e|no|vol|pp|fig|sec|dept|approx|est)\.",
+    re.IGNORECASE,
+)
+_ABBR_PLACEHOLDER = "\x00ABBR\x00"
 
 
 @dataclass
 class TextChunk:
     content: str
-    chunk_type: str   # text_chunk | ocr_text | page_summary | table_summary | image_caption
+    chunk_type: str       # text_chunk | ocr_text | page_summary | table_summary | image_caption
     section_title: str | None
     chunk_index: int
     page_start: int | None = None
     page_end: int | None = None
     token_count: int = 0
 
+
+# ── Public API ────────────────────────────────────────────────────────────────
 
 def chunk_text(
     text: str,
@@ -41,52 +72,149 @@ def chunk_text(
     start_index: int = 0,
 ) -> list[TextChunk]:
     """
-    Chunk text into overlapping segments, preserving section context.
+    Chunk text using sentence-boundary aware splitting.
+
+    Algorithm:
+      1. Split text into paragraphs (double-newline separated)
+      2. Detect heading paragraphs — flush current chunk and update section context
+      3. Within each non-heading paragraph, split into sentences
+      4. Accumulate sentences into a chunk up to TARGET_CHARS
+      5. When budget is reached, flush and carry over the last OVERLAP_SENTENCES
+         so the new chunk starts with coherent context
+      6. Discard micro-chunks (< MIN_CHARS)
     """
-    if not text.strip():
+    if not text or not text.strip():
         return []
 
     paragraphs = [p.strip() for p in re.split(r"\n{2,}", text) if p.strip()]
     chunks: list[TextChunk] = []
-    current = ""
+    accumulated_sentences: list[str] = []
+    current_chars = 0
     chunk_index = start_index
+    current_section = section_title
 
     for para in paragraphs:
-        # Detect heading
-        if HEADING_RE.match(para) and current:
-            _flush(chunks, current, chunk_type, section_title, chunk_index, page_start, page_end)
-            chunk_index += 1
-            section_title = para
-            current = ""
+        # ── Heading detection ─────────────────────────────────────────────────
+        if HEADING_RE.match(para):
+            if accumulated_sentences:
+                _flush(
+                    chunks, accumulated_sentences, chunk_type,
+                    current_section, chunk_index, page_start, page_end,
+                )
+                chunk_index += 1
+                # Carry over last overlap sentences
+                accumulated_sentences = accumulated_sentences[-OVERLAP_SENTENCES:]
+                current_chars = sum(len(s) for s in accumulated_sentences)
+            current_section = para
             continue
 
-        if len(current) + len(para) + 2 > TARGET_CHARS and current:
-            _flush(chunks, current, chunk_type, section_title, chunk_index, page_start, page_end)
-            chunk_index += 1
-            # Overlap: keep tail of previous chunk
-            current = current[-OVERLAP_CHARS:] + "\n\n" + para
-        else:
-            current = (current + "\n\n" + para).strip()
+        # ── Split paragraph into sentences ───────────────────────────────────
+        sentences = _split_sentences(para)
 
-    if current:
-        _flush(chunks, current, chunk_type, section_title, chunk_index, page_start, page_end)
+        for sent in sentences:
+            sent_len = len(sent)
 
-    logger.debug("Chunked into %d chunks (type=%s)", len(chunks), chunk_type)
+            # Single sentence longer than MAX_CHARS — hard split it
+            if sent_len > MAX_CHARS:
+                sub_sentences = _hard_split(sent, TARGET_CHARS)
+                sentences_to_add = sub_sentences
+            else:
+                sentences_to_add = [sent]
+
+            for s in sentences_to_add:
+                s_len = len(s)
+                if current_chars + s_len > TARGET_CHARS and accumulated_sentences:
+                    _flush(
+                        chunks, accumulated_sentences, chunk_type,
+                        current_section, chunk_index, page_start, page_end,
+                    )
+                    chunk_index += 1
+                    # Keep last OVERLAP_SENTENCES for continuity
+                    accumulated_sentences = accumulated_sentences[-OVERLAP_SENTENCES:]
+                    current_chars = sum(len(x) for x in accumulated_sentences)
+
+                accumulated_sentences.append(s)
+                current_chars += s_len
+
+    # Final flush
+    if accumulated_sentences:
+        _flush(
+            chunks, accumulated_sentences, chunk_type,
+            current_section, chunk_index, page_start, page_end,
+        )
+
+    logger.debug(
+        "Chunked into %d chunks (type=%s, page=%s)",
+        len(chunks), chunk_type, page_start,
+    )
     return chunks
+
+
+# ── Internal helpers ──────────────────────────────────────────────────────────
+
+def _split_sentences(text: str) -> list[str]:
+    """
+    Split a paragraph into sentences using a two-pass regex approach.
+
+    Pass 1: Protect common abbreviations (Dr., Mr., etc.) so they don't
+            trigger false sentence boundaries.
+    Pass 2: Split on sentence-ending punctuation followed by whitespace
+            and a word start character (uppercase letter, digit, quote).
+    """
+    # Protect abbreviations
+    protected = _ABBR_PATTERN.sub(
+        lambda m: m.group(0)[:-1] + _ABBR_PLACEHOLDER, text
+    )
+
+    # Split on sentence boundaries
+    raw_sentences = re.split(
+        r'(?<=[.!?])\s+(?=[A-Z0-9"\'(\[])',
+        protected,
+    )
+
+    # Restore abbreviation dots and clean up
+    cleaned: list[str] = []
+    for s in raw_sentences:
+        s = s.replace(_ABBR_PLACEHOLDER, ".").strip()
+        if s:
+            cleaned.append(s)
+
+    return cleaned if cleaned else [text.strip()]
+
+
+def _hard_split(text: str, target_chars: int) -> list[str]:
+    """
+    Last-resort splitter for sentences longer than MAX_CHARS.
+    Splits on word boundary nearest to target_chars.
+    """
+    parts = []
+    while len(text) > target_chars:
+        split_at = text.rfind(" ", 0, target_chars)
+        if split_at == -1:
+            split_at = target_chars
+        parts.append(text[:split_at].strip())
+        text = text[split_at:].strip()
+    if text:
+        parts.append(text)
+    return parts
 
 
 def _flush(
     chunks: list[TextChunk],
-    content: str,
+    sentences: list[str],
     chunk_type: str,
     section_title: str | None,
     chunk_index: int,
     page_start: int | None,
     page_end: int | None,
 ) -> None:
+    content = " ".join(sentences).strip()
+    if len(content) < MIN_CHARS:
+        logger.debug("Skipping micro-chunk (%d chars): %r…", len(content), content[:40])
+        return
     chunks.append(
         TextChunk(
-            content=content.strip(),
+            content=content,
             chunk_type=chunk_type,
             section_title=section_title,
             chunk_index=chunk_index,

@@ -67,6 +67,22 @@ class Settings:
     # Minimum cosine similarity score to include a result (0.0 = no threshold).
     retrieval_score_threshold: float = float(os.getenv("RETRIEVAL_SCORE_THRESHOLD", "0.3"))
 
+    # ── Reranking ─────────────────────────────────────────────────────────────
+    # Cross-encoder reranking improves precision after bi-encoder retrieval.
+    # The reranker fetches top_k * rerank_multiplier candidates then reranks
+    # down to top_k_final, at the cost of cross-encoder inference latency.
+    enable_reranking: bool = os.getenv("ENABLE_RERANKING", "true").lower() == "true"
+    rerank_model: str = os.getenv(
+        "RERANK_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    )
+    # Fetch this many times more candidates from vector search before reranking.
+    rerank_fetch_multiplier: int = int(os.getenv("RERANK_FETCH_MULTIPLIER", "3"))
+
+    # ── Answer generation context window ─────────────────────────────────────
+    # Maximum tokens to include in the LLM context (prompt + context blocks).
+    # At ~4 chars/token: 3000 tokens ≈ 12,000 chars ≈ ~10 dense paragraphs.
+    max_context_tokens: int = int(os.getenv("MAX_CONTEXT_TOKENS", "3000"))
+
     # ── Upload limits ─────────────────────────────────────────────────────────
     max_upload_mb: int = int(os.getenv("MAX_UPLOAD_MB", "50"))
     max_pdf_pages: int = int(os.getenv("MAX_PDF_PAGES", "300"))
